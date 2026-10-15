@@ -1,0 +1,527 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invartic | Number Maze</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 18px 10px;
+  background: #080d1d;
+  color: white;
+  font-family: Arial, sans-serif;
+  text-align: center;
+}
+
+h1 { color: #70f7ff; margin: 5px; }
+p { color: #b7c5e5; }
+
+.hud {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 16px;
+}
+
+.hud span {
+  background: #192440;
+  padding: 11px 15px;
+  border-radius: 10px;
+}
+
+#board {
+  display: grid;
+  grid-template-columns: repeat(15, minmax(0, 1fr));
+  gap: 3px;
+  width: min(600px, 96vw);
+  margin: 15px auto;
+  padding: 5px;
+  background: #101a35;
+  border-radius: 10px;
+  touch-action: manipulation;
+}
+
+.cell {
+  aspect-ratio: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: clamp(9px, 2.5vw, 18px);
+  font-weight: bold;
+}
+
+.wall { background: #30466c; }
+.floor { background: #162541; }
+.player { background: #70f7ff; color: #081323; }
+.token { background: #ffe66d; color: #392700; }
+.enemy { background: #ff5578; }
+.exit { background: #9b6bff; }
+
+button {
+  border: 0;
+  border-radius: 9px;
+  padding: 12px 17px;
+  margin: 5px;
+  background: #70f7ff;
+  color: #081323;
+  font-weight: bold;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+button:active { transform: scale(.96); }
+
+.pad {
+  display: grid;
+  grid-template-columns: repeat(3, 58px);
+  justify-content: center;
+  gap: 6px;
+  margin: 15px auto;
+}
+
+.pad button {
+  margin: 0;
+  padding: 13px 0;
+  font-size: 21px;
+}
+
+#message {
+  min-height: 40px;
+  color: #ffe66d;
+  padding: 8px;
+}
+
+.small { font-size: 13px; }
+</style>
+</head>
+
+<body>
+
+<h1>🧩 NUMBER MAZE</h1>
+<p>Collect every number. Avoid the enemy. Escape the maze!</p>
+
+<div class="hud">
+  <span>Tokens: <b id="tokens">0/5</b></span>
+  <span>Moves: <b id="moves">0</b></span>
+  <span>Lives: <b id="lives">❤️❤️❤️</b></span>
+</div>
+
+<div id="board"></div>
+
+<div id="message">
+  Use the arrow keys or buttons to move.
+</div>
+
+<div class="pad">
+  <span></span>
+  <button data-dir="up">⬆️</button>
+  <span></span>
+
+  <button data-dir="left">⬅️</button>
+  <button data-dir="down">⬇️</button>
+  <button data-dir="right">➡️</button>
+</div>
+
+<button id="restart">↻ New Maze</button>
+
+<p class="small">
+  Keyboard: Arrow keys or W, A, S, D<br>
+  🟦 Wall · 🟨 Number token · 🩷 Enemy · 🟪 Exit
+</p>
+
+<script>
+"use strict";
+
+const COLS = 15;
+const ROWS = 11;
+const TOKEN_VALUES = [2, 4, 6, 8, 10];
+
+const $ = id => document.getElementById(id);
+
+const board = $("board");
+
+let maze;
+let player;
+let enemy;
+let tokens;
+let exit;
+let moves;
+let lives;
+let gameState;
+let enemyTimer = 0;
+let lastTime = 0;
+
+function samePosition(a, b) {
+  return a.x === b.x && a.y === b.y;
+}
+
+function isInside(x, y) {
+  return x >= 0 && x < COLS && y >= 0 && y < ROWS;
+}
+
+function isWall(x, y) {
+  return !isInside(x, y) || maze[y][x] === 1;
+}
+
+// Generate a connected maze using recursive backtracking.
+function generateMaze() {
+  maze = Array.from(
+    { length: ROWS },
+    () => Array(COLS).fill(1)
+  );
+
+  const stack = [{ x: 1, y: 1 }];
+  maze[1][1] = 0;
+
+  while (stack.length > 0) {
+    const current = stack[stack.length - 1];
+
+    const directions = [
+      { dx: 0, dy: -2 },
+      { dx: 0, dy: 2 },
+      { dx: -2, dy: 0 },
+      { dx: 2, dy: 0 }
+    ].sort(() => Math.random() - 0.5);
+
+    let carved = false;
+
+    for (const dir of directions) {
+      const nx = current.x + dir.dx;
+      const ny = current.y + dir.dy;
+
+      if (
+        nx > 0 && nx < COLS - 1 &&
+        ny > 0 && ny < ROWS - 1 &&
+        maze[ny][nx] === 1
+      ) {
+        // Open the wall between the two cells.
+        maze[current.y + dir.dy / 2]
+            [current.x + dir.dx / 2] = 0;
+
+        maze[ny][nx] = 0;
+        stack.push({ x: nx, y: ny });
+        carved = true;
+        break;
+      }
+    }
+
+    if (!carved) stack.pop();
+  }
+}
+
+function shuffled(array) {
+  const result = [...array];
+
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+
+  return result;
+}
+
+function getReachableCells(start) {
+  const queue = [start];
+  const visited = new Set([start.y * COLS + start.x]);
+  const result = [];
+
+  while (queue.length) {
+    const current = queue.shift();
+    result.push(current);
+
+    for (const [dx, dy] of [
+      [0, -1], [0, 1], [-1, 0], [1, 0]
+    ]) {
+      const x = current.x + dx;
+      const y = current.y + dy;
+      const id = y * COLS + x;
+
+      if (
+        !isWall(x, y) &&
+        !visited.has(id)
+      ) {
+        visited.add(id);
+        queue.push({ x, y });
+      }
+    }
+  }
+
+  return result;
+}
+
+function newGame() {
+  generateMaze();
+
+  player = { x: 1, y: 1 };
+  exit = { x: COLS - 2, y: ROWS - 2 };
+
+  // Guarantee an open route to the exit.
+  let x = player.x;
+  let y = player.y;
+
+  while (x !== exit.x) {
+    x += Math.sign(exit.x - x);
+    maze[y][x] = 0;
+  }
+
+  while (y !== exit.y) {
+    y += Math.sign(exit.y - y);
+    maze[y][x] = 0;
+  }
+
+  // Place objects only on connected, walkable cells.
+  const available = getReachableCells(player).filter(p =>
+    !samePosition(p, player) &&
+    !samePosition(p, exit)
+  );
+
+  const positions = shuffled(available);
+
+  tokens = TOKEN_VALUES.map((value, i) => ({
+    x: positions[i].x,
+    y: positions[i].y,
+    value,
+    collected: false
+  }));
+
+  const enemyPosition = positions.find(p =>
+    !tokens.some(t => samePosition(t, p)) &&
+    Math.abs(p.x - player.x) +
+    Math.abs(p.y - player.y) >= 5
+  );
+
+  enemy = enemyPosition
+    ? { x: enemyPosition.x, y: enemyPosition.y }
+    : { x: exit.x, y: exit.y - 1 };
+
+  moves = 0;
+  lives = 3;
+  enemyTimer = 0;
+  gameState = "playing";
+
+  $("message").textContent =
+    "Find all five number tokens, then reach the purple exit.";
+
+  updateHUD();
+  render();
+}
+
+function updateHUD() {
+  const count = tokens.filter(t => t.collected).length;
+
+  $("tokens").textContent = count + "/5";
+  $("moves").textContent = moves;
+  $("lives").textContent =
+    "❤️".repeat(lives) + "🖤".repeat(3 - lives);
+}
+
+function movePlayer(dx, dy) {
+  if (gameState !== "playing") return;
+
+  const nx = player.x + dx;
+  const ny = player.y + dy;
+
+  // Do not count moves into walls.
+  if (isWall(nx, ny)) {
+    $("message").textContent = "🧱 That's a wall! Try another direction.";
+    return;
+  }
+
+  player.x = nx;
+  player.y = ny;
+
+  // Count each successful step.
+  moves++;
+
+  const token = tokens.find(t =>
+    !t.collected && samePosition(t, player)
+  );
+
+  if (token) {
+    token.collected = true;
+    $("message").textContent =
+      "✨ Number " + token.value + " collected!";
+  }
+
+  if (samePosition(player, enemy)) {
+    loseLife();
+  }
+
+  if (samePosition(player, exit)) {
+    if (tokens.every(t => t.collected)) {
+      gameState = "won";
+      $("message").textContent =
+        "🏆 You escaped the maze in " + moves + " moves!";
+    } else {
+      $("message").textContent =
+        "🔒 Exit locked! Collect all five number tokens first.";
+    }
+  }
+
+  updateHUD();
+  render();
+}
+
+function loseLife() {
+  lives--;
+
+  if (lives <= 0) {
+    gameState = "over";
+    $("message").textContent =
+      "Game over! Press New Maze to try again.";
+  } else {
+    player = { x: 1, y: 1 };
+    $("message").textContent =
+      "👾 The enemy caught you! You lost a life.";
+  }
+}
+
+function moveEnemy() {
+  if (gameState !== "playing") return;
+
+  // The enemy moves through connected open paths.
+  const options = shuffled([
+    { x: enemy.x + 1, y: enemy.y },
+    { x: enemy.x - 1, y: enemy.y },
+    { x: enemy.x, y: enemy.y + 1 },
+    { x: enemy.x, y: enemy.y - 1 }
+  ]);
+
+  const target = options.find(p => !isWall(p.x, p.y));
+
+  if (target) {
+    enemy.x = target.x;
+    enemy.y = target.y;
+  }
+
+  if (samePosition(player, enemy)) {
+    loseLife();
+  }
+
+  updateHUD();
+  render();
+}
+
+function render() {
+  board.innerHTML = "";
+
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const cell = document.createElement("div");
+      cell.className =
+        "cell " + (maze[y][x] === 1 ? "wall" : "floor");
+
+      const token = tokens.find(t =>
+        !t.collected && t.x === x && t.y === y
+      );
+
+      if (samePosition(player, { x, y })) {
+        cell.className = "cell player";
+        cell.textContent = "🙂";
+      } else if (
+        samePosition(enemy, { x, y }) &&
+        gameState === "playing"
+      ) {
+        cell.className = "cell enemy";
+        cell.textContent = "👾";
+      } else if (token) {
+        cell.className = "cell token";
+        cell.textContent = token.value;
+      } else if (samePosition(exit, { x, y })) {
+        cell.className = "cell exit";
+        cell.textContent =
+          tokens.every(t => t.collected) ? "🚪" : "🔒";
+      }
+
+      board.appendChild(cell);
+    }
+  }
+
+  if (gameState === "won" || gameState === "over") {
+    const banner = document.createElement("div");
+
+    banner.style.cssText =
+      "grid-column:1/-1;padding:15px;color:#ffe66d";
+
+    banner.textContent = gameState === "won"
+      ? "🏆 VICTORY! Press New Maze to play again."
+      : "GAME OVER — Press New Maze to retry.";
+
+    board.appendChild(banner);
+  }
+}
+
+// Keyboard controls.
+document.addEventListener("keydown", event => {
+  const directions = {
+    ArrowUp: [0, -1],
+    KeyW: [0, -1],
+    ArrowDown: [0, 1],
+    KeyS: [0, 1],
+    ArrowLeft: [-1, 0],
+    KeyA: [-1, 0],
+    ArrowRight: [1, 0],
+    KeyD: [1, 0]
+  };
+
+  if (directions[event.code]) {
+    event.preventDefault();
+
+    if (!event.repeat) {
+      movePlayer(...directions[event.code]);
+    }
+  }
+
+  if (event.code === "Enter" && gameState !== "playing") {
+    newGame();
+  }
+});
+
+// On-screen controls.
+const buttonDirections = {
+  up: [0, -1],
+  down: [0, 1],
+  left: [-1, 0],
+  right: [1, 0]
+};
+
+document.querySelectorAll("[data-dir]").forEach(button => {
+  button.addEventListener("click", () => {
+    movePlayer(...buttonDirections[button.dataset.dir]);
+  });
+});
+
+$("restart").addEventListener("click", newGame);
+
+// Animate the enemy independently of player movement.
+function loop(time) {
+  const dt = Math.min((time - lastTime) / 1000 || 0, 0.05);
+  lastTime = time;
+
+  if (gameState === "playing") {
+    enemyTimer += dt;
+
+    if (enemyTimer >= 0.9) {
+      enemyTimer = 0;
+      moveEnemy();
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+newGame();
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
+```
